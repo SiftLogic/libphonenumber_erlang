@@ -3,3 +3,4 @@ MnesiaLibPhoneNumber/
 libphonenumber_erlang.d
 .idea/
 *.dump
+*iml
