@@ -4,6 +4,8 @@
 -export([start_link/0]).
 -export([init/1]).
 
+-export([load_countryphonenumbers_rules/0]).
+
 -include("phonenumbers.hrl").
 
 start_link() ->
@@ -24,16 +26,38 @@ init([]) ->
 load_countryphonenumbers_rules() ->
     PhoneNumberMetadata = code:priv_dir(libphonenumber_erlang) ++ "/" ++ ?FILE_PHONE_PHONE_FORMATS,
     Rules = libphonenumber_parser:xml_file2memory(PhoneNumberMetadata),
-    maps:fold(
-      fun(Code, CodeRulesInfo, _) ->
-              CodeRules = [#code_set{id = Id, lengths = Length, name = Name, pattern = Pattern} ||
-                              #{id := Id, lengths := Length, pattern := Pattern, name := Name} <- CodeRulesInfo],
-              Record = #countryphones{
-                          code = Code,
-                          code_rules = CodeRules},
-              ets:insert(?ETS_TABLE, Record)
-      end, #{}, Rules),
+    OldKeys = [K || #countryphones{code = K} <- ets:tab2list(?ETS_TABLE)],
+    DelKeys = lists:foldl(
+                fun({Code, CodeRulesInfo}, Old) ->
+                        CodeRules = rules_to_code_sets(CodeRulesInfo),
+                        Record = #countryphones{
+                                    code = Code,
+                                    code_rules = CodeRules},
+                        ets:insert(?ETS_TABLE, Record),
+                        lists:delete(Code, Old)
+                end, OldKeys, Rules),
+    io:format("Deleting: ~p~n", [DelKeys]),
+    _ = [ets:delete(?ETS_TABLE, K) || K <- DelKeys],
     ok.
+
+rules_to_code_sets(CodeRulesInfo) ->
+    rules_to_code_sets(CodeRulesInfo, []).
+
+rules_to_code_sets([], Acc) ->
+    lists:reverse(Acc);
+rules_to_code_sets([#phone_pattern{
+                       id = Id,
+                       lengths = Length,
+                       pattern = Pattern,
+                       name = Name,
+                       type = Type
+                      } | Rest], Acc) ->
+    Rec = #code_set{id = Id,
+                    lengths = Length,
+                    name = Name,
+                    pattern = Pattern,
+                    type = Type},
+    rules_to_code_sets(Rest, [Rec | Acc]).
 
 %% -------------------------------------------------------------------
 %% @private

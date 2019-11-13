@@ -66,10 +66,12 @@ rules_for_codepairs([], #{errors := Errors} = ValidationLog) ->
 
 rules_for_codepairs([{Code, Phone} | Pairs], ValidationLog) ->
     Rules = ets:lookup(?ETS_TABLE, Code),
-    #{valid := IsValid, errors := ResErrors} = ValidationResult = rules_for_code(Rules, ValidationLog, {Code, Phone}),
-    if IsValid ->
+    ValidationResult = rules_for_code(Rules, ValidationLog, {Code, Phone}),
+    #{valid := IsValid, errors := ResErrors} = ValidationResult,
+    case IsValid of
+        true ->
             ValidationResult;
-       true ->
+        false ->
             rules_for_codepairs(Pairs, ValidationLog#{errors => ResErrors})
     end.
 
@@ -103,20 +105,25 @@ rules_for_code(_E, #{errors := Errors} = ValidationLog, {Code, _}) ->
 match_code_rule([], ValidationLog, _) ->
     ValidationLog;
 
-match_code_rule([#code_set{lengths = LenghtRange, pattern = Pattern, name = Name, id = Id} |
-                 Rules], #{errors := Errors} = ValidationLog, {Code, Phone}) ->
-    #{valid := IsValid, error := Error} =  valid_phone_with_length_rules(Code, Phone, LenghtRange, Pattern),
+match_code_rule([#code_set{lengths = Lengths, pattern = Pattern,
+                           name = Name, id = Id, type = Type} | Rules],
+                #{errors := Errors} = Log, {Code, Phone}) ->
+    #{valid := IsValid, error := Error} =  valid_phone_with_length_rules(
+                                             Code, Phone,
+                                             Lengths, Pattern),
     InternationalPhone = <<"+", Code/binary, Phone/binary>>,
-    if IsValid ->
+    case IsValid of
+        true ->
             #{valid => true,
               phone => InternationalPhone,
+              type => Type,
               country_metadata => #{
                                     name => Name,
                                     id => Id,
                                     code => Code},
               errors => []};
-       true ->
-            match_code_rule(Rules, ValidationLog#{errors => [Error | Errors]}, {Code, Phone})
+        false ->
+            match_code_rule(Rules, Log#{errors => [Error | Errors]}, {Code, Phone})
     end.
 
 %% -------------------------------------------------------------------
@@ -144,13 +151,14 @@ valid_phone_with_length_rules(Code, _Phone, [], _) ->
 
 valid_phone_with_length_rules(Code, Phone, [{Min, Max} | LengthRange], Pattern) ->
     Size = erlang:size(Phone),
-    if (Size >= Min) and (Size =< Max) ->
+    case (Size >= Min) andalso (Size =< Max) of
+        false ->
+            valid_phone_with_length_rules(Code, Phone, LengthRange, Pattern);
+        true ->
             case re:run(Phone, Pattern, [{capture, none}]) of
                 match ->
                     #{valid => true, error => null};
                 _ ->
                     #{valid => false, error => #{Code => <<"Pattern '", Pattern/binary, "' compilation failed">>}}
-            end;
-       true ->
-            valid_phone_with_length_rules(Code, Phone, LengthRange, Pattern)
+            end
     end.

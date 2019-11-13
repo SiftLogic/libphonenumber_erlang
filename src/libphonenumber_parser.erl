@@ -31,8 +31,8 @@ xml_file2memory(FileName) ->
     case xmerl_scan:file(FileName) of
         {Xml, _} ->
             #xmlElement{content = [_, TerrirtoriesEl, _]} = Xml,
-            TerrirtoriesInfo = TerrirtoriesEl#xmlElement.content,
-            parse_country_name(TerrirtoriesInfo);
+            TerritoriesInfo = TerrirtoriesEl#xmlElement.content,
+            parse_countries(TerritoriesInfo);
         _ ->
             error
     end.
@@ -41,97 +41,132 @@ xml_file2memory(FileName) ->
 %% @private
 %% This block of code math name of country and block of rules for territory
 %% --------------------------------------------------------------------------
--spec parse_country_name(list()) -> maps:map().
+-spec parse_countries(list()) -> [] | list({binary(), list(#phone_pattern{})}).
 
-parse_country_name(Elements) ->
-    parse_country_name(undefined, Elements, #{}).
+parse_countries(Elements) ->
+    parse_country(undefined, Elements, []).
 
--spec parse_country_name(Name, XmlDoc, Acc) -> Res when
+-spec parse_country(Name, XmlDoc, Acc) -> Res when
       Name :: undefined | binary,
       XmlDoc :: list(),
-      Acc :: maps:map(),
-      Res :: maps:map().
+      Acc :: [] | list({binary(), list(#phone_pattern{})}),
+      Res :: [] | list({binary(), list(#phone_pattern{})}).
 
-parse_country_name(_, [], Acc) ->
+parse_country(_, [], Acc) ->
     Acc;
-
-parse_country_name(undefined, [C = #xmlComment{} | Rest], Acc) ->
+parse_country(undefined, [C = #xmlComment{} | Rest], Acc) ->
     Name = C#xmlComment.value,
-    NromalName = trim_first_last_whitespaces(Name),
-    parse_country_name(unicode:characters_to_binary(NromalName, utf8), Rest, Acc);
-
-parse_country_name(Name, [E = #xmlElement{name = territory} | Rest], Acc) when is_binary(Name) ->
+    NormalizedName = normalize(Name),
+    parse_country(NormalizedName, Rest, Acc);
+parse_country(Name, [E = #xmlElement{name = territory} | Rest], Acc) when is_binary(Name) ->
     #xmlElement{name = territory, attributes = Attrs, content = Content} = E,
-    PhonePattern = parse_attributes(Attrs, #phone_pattern{}),
-    CountryPhoneInfo = parse_mobile_content(Content, PhonePattern),
-    #phone_pattern{
-       id = Id,
-       code = Code,
-       possible_length_regexp = LengthInfo,
-       pattern = Pattern,
-       options = Options} = CountryPhoneInfo,
-    CountryInfoMap = #{
-                       id => Id, name => Name, pattern => Pattern, lengths => format_rules(LengthInfo), options => Options},
-    PrevCodes = maps:get(Code, Acc, []),
-    NewAcc =  maps:put(Code, [CountryInfoMap | PrevCodes], Acc),
-    parse_country_name(undefined, Rest, NewAcc);
+    IsMainCountry = is_main_country_for_code(Attrs),
+    PhonePattern0 = parse_number_attributes(Attrs, #phone_pattern{}),
+    PhonePattern = case IsMainCountry of
+                       true ->
+                           PhonePattern0#phone_pattern{sort = 0, is_main_country = IsMainCountry};
+                       false ->
+                           PhonePattern0
+                   end,
+    CountryPhoneInfos = parse_number_type_content(Content, PhonePattern),
+    NewAcc = add_patterns(CountryPhoneInfos, Name, Acc),
+    parse_country(undefined, Rest, NewAcc);
+parse_country(State, [_H|Rest], Acc) ->
+    parse_country(State, Rest, Acc).
 
-parse_country_name(State, [_H|Rest], Acc) ->
-    parse_country_name(State, Rest, Acc).
+%% @private
+%% We need to make sure that the 'main' entry for a country is
+%% first within the list of entries for a code
+add_patterns([], _Name, Acc) ->
+    Acc;
+add_patterns([#phone_pattern{code = Code, possible_length_regexp = LengthInfo} = PhoneInfo | Rest], Name, Acc) ->
+    Lengths = format_rules(LengthInfo),
+    NRec = PhoneInfo#phone_pattern{name = Name, lengths = Lengths},
+    NAcc = case lists:keytake(Code, 1, Acc) of
+               false ->
+                   [{Code, [NRec]} | Acc];
+               {value, {Code, ORecs}, Acc2} ->
+                   NRecs = lists:keysort(#phone_pattern.sort, [NRec | ORecs]),
+                   [{Code, NRecs} | Acc2]
+           end,
+    add_patterns(Rest, Name, NAcc).
+
+is_main_country_for_code(Attribs) ->
+    case [M || #xmlAttribute{name = mainCountryForCode, value = "true"} = M <- Attribs] of
+        [] -> false;
+        [_]-> true
+    end.
+
+%% @private
+-spec normalize(list()) -> binary().
+normalize(Str) ->
+    Norm = trim_first_last_whitespaces(Str),
+    unicode:characters_to_binary(Norm, utf8).
 
 %% -------------------------------------------------------------------
 %% @private
 %% Parse country attributes
 %% -------------------------------------------------------------------
--spec parse_attributes(Attributes, State) -> State when
+-spec parse_number_attributes(Attributes, State) -> State when
       Attributes :: list(#xmlAttribute{}),
       State :: #phone_pattern{}.
 
-parse_attributes([], State) ->
+parse_number_attributes([], State) ->
     State;
-
-parse_attributes([#xmlAttribute{name = id, value = Id} | Rest], State) ->
-    parse_attributes(Rest, State#phone_pattern{id = list_to_binary(Id)});
-
-parse_attributes([#xmlAttribute{name = countryCode, value = Code} | Rest], State) ->
-    parse_attributes(Rest, State#phone_pattern{code = list_to_binary(Code)});
-
-parse_attributes([_ | Rest], State) ->
-    parse_attributes(Rest, State).
+parse_number_attributes([#xmlAttribute{name = id, value = Id} | Rest], State) ->
+    parse_number_attributes(Rest, State#phone_pattern{id = list_to_binary(Id)});
+parse_number_attributes([#xmlAttribute{name = countryCode, value = Code} | Rest], State) ->
+    parse_number_attributes(Rest, State#phone_pattern{code = list_to_binary(Code)});
+parse_number_attributes([_ | Rest], State) ->
+    parse_number_attributes(Rest, State).
 
 %% -------------------------------------------------------------------
 %% @private
 %% Parse country mobile possible length
 %% -------------------------------------------------------------------
--spec parse_mobile_content(Elements, State) -> State when
+-spec parse_number_type_content(Elements, Patt) -> Acc when
       Elements :: list(#xmlElement{}),
-      State :: #phone_pattern{}.
+      Patt :: #phone_pattern{},
+      Acc :: list(#phone_pattern{}).
 
-parse_mobile_content([], State) ->
-    State;
+parse_number_type_content(Elements, Patt) ->
+    parse_number_type_content(Elements, Patt, []).
 
-parse_mobile_content([#xmlElement{name = mobile, content = Content} | Rest], State) ->
-    #phone_pattern{possible_length_regexp = Ls} = State,
+parse_number_type_content([], _Patt, Acc) ->
+    %% this is reversed by the foldl in the caller
+    Acc;
+
+parse_number_type_content([#xmlElement{name = Type} | Rest], Patt, Acc)
+  when Type =:= availableFormats orelse Type =:= generalDesc ->
+    %% Skip these
+    parse_number_type_content(Rest, Patt, Acc);
+parse_number_type_content([#xmlElement{name = Type, content = Content} | Rest], Patt, Acc) ->
     #{pattern := Pattern,
       length := LengthAttributes} = get_pattern_and_length(Content),
     ExampleNumber = get_example_number(Content),
-    [NewLength] = parse_possible_length(LengthAttributes, Ls),
-    NewState = State#phone_pattern{
-                 possible_length_regexp = NewLength,
-                 pattern = Pattern,
-                 options = if ExampleNumber == null -> []; true -> [#{example_number => ExampleNumber}] end
-                },
-    parse_mobile_content(Rest, NewState);
+    [NewLength] = parse_possible_length(LengthAttributes, []),
+    NPatt = Patt#phone_pattern{
+              possible_length_regexp = NewLength,
+              pattern = Pattern,
+              options = add_example(ExampleNumber),
+              type = Type
+             },
+    parse_number_type_content(Rest, Patt, [NPatt | Acc]);
+parse_number_type_content([_ | Rest], Patt, State) ->
+    parse_number_type_content(Rest, Patt, State).
 
-parse_mobile_content([_ | Rest], State) ->
-    parse_mobile_content(Rest, State).
+%% @private
+-spec add_example(null | list()) -> list().
+add_example(null) ->
+    [];
+add_example(ExampleNumber) ->
+    [#{example_number => ExampleNumber}].
 
 %% -------------------------------------------------------------------
 %% @private
 %% Get possible length and pattern by one run
 %% -------------------------------------------------------------------
 -spec get_pattern_and_length(list()) -> map().
-
 get_pattern_and_length(Content) ->
     get_pattern_and_length(Content, #{}).
 
@@ -139,19 +174,16 @@ get_pattern_and_length(Content) ->
       Acc :: maps:map(),
       Elements :: list(),
       Res :: map().
-
 get_pattern_and_length(_, #{pattern := _Pattern, length := _LengthAttrs} = Acc) ->
     Acc;
-
 get_pattern_and_length([#xmlElement{name = possibleLengths, attributes = Attrs} | Rest], Acc) ->
     CurrAttrs = maps:get(length, Acc, []),
     get_pattern_and_length(Rest, maps:put(length, [Attrs | CurrAttrs], Acc));
-
 get_pattern_and_length([#xmlElement{name = nationalNumberPattern, content = C} | Rest], Acc) ->
     [PatternVal] = [V || #xmlText{value = V} <- C],
     Pattern = re:replace(PatternVal, "\s+|\n|\t", "", [global, {return, binary}]),
+    %% @TODO : Do we need to do any escaping on the patterns since Erlang does have some funky double-escape rules for regexes
     get_pattern_and_length(Rest, maps:put(pattern, Pattern, Acc));
-
 get_pattern_and_length([_|Rest], Acc) ->
     get_pattern_and_length(Rest, Acc).
 
@@ -159,11 +191,10 @@ get_pattern_and_length([_|Rest], Acc) ->
 %% @private
 %% Get example of valid phone, only for test
 %% -------------------------------------------------------------------
-get_example_number([]) -> null;
-
+get_example_number([]) ->
+    null;
 get_example_number([#xmlElement{name = exampleNumber, content = [#xmlText{value = ExampleNumber}]} | _]) ->
     ExampleNumber;
-
 get_example_number([_E|Rest]) ->
     get_example_number(Rest).
 
@@ -175,10 +206,8 @@ get_example_number([_E|Rest]) ->
       Attrs :: list(#xmlAttribute{}),
       Acc :: list(binary()),
       ResAcc :: list(binary()).
-
 parse_possible_length([], Acc) ->
     Acc;
-
 parse_possible_length([Attrs | Rest], Acc) ->
     Ls =[V || #xmlAttribute{name = national, value = V} <- Attrs],
     parse_possible_length(Rest, Acc ++ Ls).
@@ -193,44 +222,25 @@ parse_possible_length([Attrs | Rest], Acc) ->
       Result :: {Min, Max},
       Min :: integer(),
       Max :: integer().
-
 format_rules([]) ->
     no_rules;
-
 format_rules(Length) ->
-    formath_length(Length, #length{}).
+    format_length(Length).
 
--spec formath_length(LengthText, Length) -> Result when
-      LengthText :: list(),
-      Length :: #length{},
-      Result :: {Min, Max},
-      Min :: integer(),
-      Max :: integer().
+format_length(Len) when is_list(Len) ->
+    LenBin = iolist_to_binary(Len),
+    Split = binary:split(LenBin, <<",">>, [global]),
+    format_length(Split, []).
 
-%% when length in [1-9] format
-formath_length([$[ | Rest], CLenght) ->
-    formath_length(Rest, CLenght#length{is_range = true, part = 1});
-
-formath_length([$- | Rest], CLenght = #length{is_range = true}) ->
-    formath_length(Rest, CLenght#length{is_range = true, part = 2});
-
-formath_length([$]], #length{is_range = true, min = Min, max = Max}) ->
-    [{list_to_integer(Min), list_to_integer(Max)}];
-
-formath_length([Symb | Rest], CLenght = #length{is_range = true}) ->
-    #length{part = Part, min = Min, max = Max} = CLenght,
-    case Part of
-        1 ->
-            formath_length(Rest, CLenght#length{min = Min ++ [Symb]});
-        2 ->
-            formath_length(Rest, CLenght#length{max = Max ++ [Symb]})
-    end;
-
-%% when length like 9 or 8,11
-formath_length(Length, #length{is_range = false}) ->
-    BLen = list_to_binary(Length),
-    AvailiableLength = binary:split(BLen, <<",">>, [global]),
-    [{binary_to_integer(M), binary_to_integer(M)} || M <- AvailiableLength].
+format_length([], Acc) ->
+    lists:reverse(Acc);
+format_length([<<"[", _/binary>> = Range0 | Rest], Acc) ->
+    Range1 = binary:replace(Range0, [<<"[">>, <<"]">>], <<>>, [global]),
+    [Min0, Max0] = binary:split(Range1, <<"-">>),
+    format_length(Rest, [{binary_to_integer(Min0), binary_to_integer(Max0)} | Acc]);
+format_length([Fixed0 | Rest], Acc) ->
+    Fixed = binary_to_integer(Fixed0),
+    format_length(Rest, [{Fixed, Fixed} | Acc]).
 
 %% -------------------------------------------------------------------
 %% @private
@@ -238,24 +248,19 @@ formath_length(Length, #length{is_range = false}) ->
 -spec trim_first_last_whitespaces(Name) -> NoWhitespaceName when
       Name :: list(),
       NoWhitespaceName :: list().
-
 trim_first_last_whitespaces(Name) ->
     LName = trim_leading_whitespaces(Name),
     RName = trim_leading_whitespaces(lists:reverse(LName)),
     lists:reverse(RName).
 
 -spec trim_leading_whitespaces(list()) -> list().
-
-                                                % Be accurate here with tabulation,
-                                                % Whitespace after $ is matter, it is whitespace symbol, 32
-trim_leading_whitespaces([$ | Name]) ->
+%% Be accurate here with tabulation,
+%% Whitespace after '$ ' is matter, it is whitespace symbol, 32
+trim_leading_whitespaces([$  | Name]) ->
     trim_leading_whitespaces(Name);
-
 trim_leading_whitespaces([$\t | Name]) ->
     trim_leading_whitespaces(Name);
-
 trim_leading_whitespaces([$\n | Name]) ->
     trim_leading_whitespaces(Name);
-
 trim_leading_whitespaces(Name) ->
     Name.
