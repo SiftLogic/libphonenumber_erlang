@@ -4,7 +4,7 @@
 -export([start_link/0]).
 -export([init/1]).
 
--include_lib("include/phonenumbers.hrl").
+-include("phonenumbers.hrl").
 
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).

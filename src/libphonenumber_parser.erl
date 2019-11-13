@@ -5,7 +5,7 @@
 -module(libphonenumber_parser).
 -author("marinakr").
 
--include_lib("include/phonenumbers.hrl").
+-include("phonenumbers.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
 
@@ -33,7 +33,7 @@ xml_file2memory(?FILE_PHONE_PHONE_FORMATS = FileName) ->
     {Xml, _} ->
       #xmlElement{content = [_, TerrirtoriesEl, _]} = Xml,
       TerrirtoriesInfo = TerrirtoriesEl#xmlElement.content,
-      parce_country_name(TerrirtoriesInfo);
+      parse_country_name(TerrirtoriesInfo);
     _ ->
       error
   end;
@@ -45,26 +45,26 @@ xml_file2memory(_) ->
 %% @private
 %% This block of code math name of country and block of rules for territory
 %% --------------------------------------------------------------------------
--spec parce_country_name(list()) -> maps:map().
+-spec parse_country_name(list()) -> maps:map().
 
-parce_country_name(Elements) ->
-  parce_country_name(undefined, Elements, #{}).
+parse_country_name(Elements) ->
+  parse_country_name(undefined, Elements, #{}).
 
--spec parce_country_name(Name, XmlDoc, Acc) -> Res when
+-spec parse_country_name(Name, XmlDoc, Acc) -> Res when
   Name :: undefined | binary,
   XmlDoc :: list(),
   Acc :: maps:map(),
   Res :: maps:map().
 
-parce_country_name(_, [], Acc) ->
+parse_country_name(_, [], Acc) ->
   Acc;
 
-parce_country_name(undefined, [C = #xmlComment{} | Rest], Acc) ->
+parse_country_name(undefined, [C = #xmlComment{} | Rest], Acc) ->
   Name = C#xmlComment.value,
   NromalName = trim_first_last_whitespaces(Name),
-  parce_country_name(unicode:characters_to_binary(NromalName, utf8), Rest, Acc);
+  parse_country_name(unicode:characters_to_binary(NromalName, utf8), Rest, Acc);
 
-parce_country_name(Name, [E = #xmlElement{name = territory} | Rest], Acc) when is_binary(Name) ->
+parse_country_name(Name, [E = #xmlElement{name = territory} | Rest], Acc) when is_binary(Name) ->
   #xmlElement{name = territory, attributes = Attrs, content = Content} = E,
   PhonePattern = parse_attributes(Attrs, #phone_pattern{}),
   CountryPhoneInfo = parse_mobile_content(Content, PhonePattern),
@@ -77,10 +77,10 @@ parce_country_name(Name, [E = #xmlElement{name = territory} | Rest], Acc) when i
     id => Id, name => Name, pattern => Pattern, lengths => format_rules(LengthInfo)},
   PrevCodes = maps:get(Code, Acc, []),
   NewAcc =  maps:put(Code, [CountryInfoMap | PrevCodes], Acc),
-  parce_country_name(undefined, Rest, NewAcc);
+  parse_country_name(undefined, Rest, NewAcc);
 
-parce_country_name(State, [_H|Rest], Acc) ->
-  parce_country_name(State, Rest, Acc).
+parse_country_name(State, [_H|Rest], Acc) ->
+  parse_country_name(State, Rest, Acc).
 
 %% -------------------------------------------------------------------
 %% @private
