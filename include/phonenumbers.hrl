@@ -10,22 +10,21 @@
 -define(ETS_TABLE, libphonenumber_erlang_registry).
 
 -record(phone_pattern, {
-  code = undefined,
-  id = undefined,
-  possible_length_regexp = [],
-  pattern,
-  options = []}).
+                        code = undefined,
+                        id = undefined,
+                        possible_length_regexp = [],
+                        pattern,
+                        options = []}).
 
 -record(length, {
-  min = "",
-  max = "",
-  is_range = false,
-  part}).
+                 min = "",
+                 max = "",
+                 is_range = false,
+                 part}).
 
 -record(code_set, {id, lengths = [], name, pattern, metadata}).
 
 -record(countryphones, {
-  code :: binary(),
-  code_rules = [] :: list(#code_set{})
-}).
-
+                        code :: binary(),
+                        code_rules = [] :: list(#code_set{})
+                       }).
