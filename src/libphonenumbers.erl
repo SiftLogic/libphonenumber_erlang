@@ -64,13 +64,13 @@ mobile_phone_number_info(_) ->
 rules_for_codepairs([], #{errors := Errors} = ValidationLog) ->
   ValidationLog#{valid => false, errors => [#{"NO PAIRS" => "Finished"} | Errors]};
 
-rules_for_codepairs([{Code, Phone} | Pairs], #{errors := Errors} = ValidationLog) ->
-  Rules = mnesia:dirty_read(countryphones, Code),
+rules_for_codepairs([{Code, Phone} | Pairs], ValidationLog) ->
+  Rules = ets:lookup(?ETS_TABLE, Code),
   #{valid := IsValid, errors := ResErrors} = ValidationResult = rules_for_code(Rules, ValidationLog, {Code, Phone}),
   if IsValid ->
     ValidationResult;
     true ->
-    rules_for_codepairs(Pairs, ValidationLog#{errors => Errors ++ ResErrors})
+    rules_for_codepairs(Pairs, ValidationLog#{errors => ResErrors})
   end.
 
 %% -------------------------------------------------------------------
